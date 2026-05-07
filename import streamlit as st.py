@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
 
@@ -352,12 +353,15 @@ st.markdown("""
 def load_and_process_data(file_path):
     df = pd.read_csv(file_path)
 
+    # Binary variable consistency enforcement
     df['IsActiveMember'] = df['IsActiveMember'].astype(int)
     df['HasCrCard'] = df['HasCrCard'].astype(int)
     df['Exited'] = df['Exited'].astype(int)
 
+    # RSI computation
     df['RSI'] = (np.minimum(df['NumOfProducts'] / 3, 1) * 40) + (df['IsActiveMember'] * 40) + (df['HasCrCard'] * 20)
 
+    # Engagement profile classification
     median_balance = df['Balance'].median()
     def segment_profile(row):
         if row['IsActiveMember'] == 1 and row['NumOfProducts'] >= 2:
@@ -370,13 +374,21 @@ def load_and_process_data(file_path):
             return 'Inactive High-Balance'
         else:
             return 'Standard/Other'
-
     df['Engagement_Profile'] = df.apply(segment_profile, axis=1)
+
+    # Salary-Balance mismatch flag (high earner, low balance)
+    salary_q75 = df['EstimatedSalary'].quantile(0.75)
+    balance_q25 = df['Balance'].quantile(0.25)
+    df['Salary_Balance_Mismatch'] = (
+        (df['EstimatedSalary'] >= salary_q75) & (df['Balance'] <= balance_q25)
+    ).astype(int)
+
     return df
 
 @st.cache_resource
 def train_retention_model(df):
-    features = ['CreditScore', 'Geography', 'Gender', 'Age', 'Tenure', 'Balance', 'NumOfProducts', 'HasCrCard', 'IsActiveMember', 'EstimatedSalary']
+    features = ['CreditScore', 'Geography', 'Gender', 'Age', 'Tenure', 'Balance',
+                'NumOfProducts', 'HasCrCard', 'IsActiveMember', 'EstimatedSalary']
     X = df[features].copy()
     y = df['Exited']
 
@@ -387,7 +399,6 @@ def train_retention_model(df):
 
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
-
     return model, le_geo, le_gen
 
 DATA_PATH = "European_Bank.csv"
@@ -400,7 +411,8 @@ except FileNotFoundError:
 
 # Train model and generate churn probabilities
 model, le_geo, le_gen = train_retention_model(raw_df)
-X_pred = raw_df[['CreditScore', 'Geography', 'Gender', 'Age', 'Tenure', 'Balance', 'NumOfProducts', 'HasCrCard', 'IsActiveMember', 'EstimatedSalary']].copy()
+X_pred = raw_df[['CreditScore', 'Geography', 'Gender', 'Age', 'Tenure', 'Balance',
+                  'NumOfProducts', 'HasCrCard', 'IsActiveMember', 'EstimatedSalary']].copy()
 X_pred['Geography'] = le_geo.transform(X_pred['Geography'])
 X_pred['Gender'] = le_gen.transform(X_pred['Gender'])
 raw_df['Churn_Probability'] = (model.predict_proba(X_pred)[:, 1] * 100).round(2)
@@ -415,15 +427,18 @@ age_range = st.sidebar.slider("Age Range", int(raw_df['Age'].min()), int(raw_df[
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Product Count Filter**")
-prod_range = st.sidebar.slider("Number of Products", int(raw_df['NumOfProducts'].min()), int(raw_df['NumOfProducts'].max()), (int(raw_df['NumOfProducts'].min()), int(raw_df['NumOfProducts'].max())))
+prod_range = st.sidebar.slider("Number of Products", int(raw_df['NumOfProducts'].min()), int(raw_df['NumOfProducts'].max()),
+                                (int(raw_df['NumOfProducts'].min()), int(raw_df['NumOfProducts'].max())))
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Balance Threshold**")
-bal_range = st.sidebar.slider("Balance (€)", int(raw_df['Balance'].min()), int(raw_df['Balance'].max()), (int(raw_df['Balance'].min()), int(raw_df['Balance'].max())), step=1000)
+bal_range = st.sidebar.slider("Balance (€)", int(raw_df['Balance'].min()), int(raw_df['Balance'].max()),
+                               (int(raw_df['Balance'].min()), int(raw_df['Balance'].max())), step=1000)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Salary Threshold**")
-sal_range = st.sidebar.slider("Estimated Salary (€)", int(raw_df['EstimatedSalary'].min()), int(raw_df['EstimatedSalary'].max()), (int(raw_df['EstimatedSalary'].min()), int(raw_df['EstimatedSalary'].max())), step=1000)
+sal_range = st.sidebar.slider("Estimated Salary (€)", int(raw_df['EstimatedSalary'].min()), int(raw_df['EstimatedSalary'].max()),
+                               (int(raw_df['EstimatedSalary'].min()), int(raw_df['EstimatedSalary'].max())), step=1000)
 
 # Apply Dynamic Filters
 df = raw_df[
@@ -439,57 +454,260 @@ st.sidebar.markdown("---")
 st.sidebar.metric("Filtered Customers", f"{len(df):,}", delta=f"{len(df)-len(raw_df):,} from total")
 
 # 4. Tabs Layout
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Executive KPIs & Overview", "🎯 Product Depth Matrix", "⚠️ At-Risk Premium Detector", "🤖 ML Churn Insights", "💎 Retention Strength Scoring"])
+tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🔍 Data Validation",
+    "🚀 Executive KPIs & Engagement",
+    "🎯 Product Utilization",
+    "💰 Financial vs Engagement",
+    "🤖 ML Churn Insights",
+    "💎 Retention Strength"
+])
 
-# --- TAB 1: EXECUTIVE OVERVIEW ---
+# ═══════════════════════════════════════════════════════════════════
+# TAB 0: DATA INGESTION & VALIDATION
+# ═══════════════════════════════════════════════════════════════════
+with tab0:
+    st.subheader("Dataset Load Confirmation")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Records", f"{len(raw_df):,}")
+    c2.metric("Total Features", f"{raw_df.shape[1]}")
+    c3.metric("Missing Values", f"{raw_df.isnull().sum().sum()}")
+    c4.metric("Duplicate Rows", f"{raw_df.duplicated().sum()}")
+
+    st.markdown("---")
+
+    # ── Binary Variable Consistency ──────────────────────────────
+    st.subheader("Binary Variable Consistency Check")
+    binary_cols = ['IsActiveMember', 'HasCrCard', 'Exited']
+    consistency_rows = []
+    for col in binary_cols:
+        unique_vals = sorted(raw_df[col].unique().tolist())
+        is_valid = set(unique_vals).issubset({0, 1})
+        consistency_rows.append({
+            'Field': col,
+            'Unique Values': str(unique_vals),
+            'Expected': '[0, 1]',
+            'Status': '✅ Valid' if is_valid else '❌ Invalid'
+        })
+    st.dataframe(pd.DataFrame(consistency_rows), width='stretch')
+
+    st.markdown("---")
+
+    # ── Engagement & Product Field Validation ────────────────────
+    st.subheader("Engagement & Product Field Validation")
+    col_l, col_r = st.columns(2)
+
+    with col_l:
+        st.markdown("**IsActiveMember Distribution**")
+        act_counts = raw_df['IsActiveMember'].value_counts().reset_index()
+        act_counts.columns = ['Status', 'Count']
+        act_counts['Status'] = act_counts['Status'].map({1: 'Active (1)', 0: 'Inactive (0)'})
+        fig_act = px.pie(act_counts, names='Status', values='Count',
+                         color_discrete_sequence=['#00d2ff', '#7b2ff7'],
+                         template='plotly_dark', hole=0.5)
+        fig_act.update_layout(paper_bgcolor='rgba(0,0,0,0)',
+                               font=dict(color='#a0aec0'),
+                               legend=dict(bgcolor='rgba(0,0,0,0)'),
+                               margin=dict(l=10, r=10, t=20, b=10))
+        st.plotly_chart(fig_act, width='stretch')
+
+    with col_r:
+        st.markdown("**NumOfProducts Distribution**")
+        prod_counts = raw_df['NumOfProducts'].value_counts().sort_index().reset_index()
+        prod_counts.columns = ['Products', 'Count']
+        fig_prod_val = px.bar(prod_counts, x='Products', y='Count',
+                              color='Count', color_continuous_scale='Plasma',
+                              template='plotly_dark')
+        fig_prod_val.update_layout(paper_bgcolor='rgba(0,0,0,0)',
+                                    plot_bgcolor='rgba(255,255,255,0.02)',
+                                    font=dict(color='#a0aec0'),
+                                    xaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+                                    yaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+                                    margin=dict(l=10, r=10, t=20, b=10))
+        fig_prod_val.update_traces(marker_line_width=0)
+        st.plotly_chart(fig_prod_val, width='stretch')
+
+    st.markdown("---")
+
+    # ── Churn Label Accuracy ─────────────────────────────────────
+    st.subheader("Churn Labeling Accuracy")
+    churn_dist = raw_df['Exited'].value_counts().reset_index()
+    churn_dist.columns = ['Exited', 'Count']
+    churn_dist['Label'] = churn_dist['Exited'].map({0: 'Retained (0)', 1: 'Churned (1)'})
+    churn_dist['Pct'] = (churn_dist['Count'] / len(raw_df) * 100).round(2)
+
+    col_a, col_b = st.columns([1, 2])
+    with col_a:
+        st.dataframe(churn_dist[['Label', 'Count', 'Pct']].rename(columns={'Pct': '% of Total'}), width='stretch')
+        imbalance_ratio = churn_dist['Count'].max() / churn_dist['Count'].min()
+        if imbalance_ratio > 3:
+            st.warning(f"⚠️ Class imbalance detected (ratio {imbalance_ratio:.1f}:1). Consider oversampling before ML training.")
+        else:
+            st.success(f"✅ Class balance acceptable (ratio {imbalance_ratio:.1f}:1).")
+    with col_b:
+        fig_churn_val = px.bar(churn_dist, x='Label', y='Count',
+                                text=churn_dist['Pct'].map('{:.1f}%'.format),
+                                color='Label',
+                                color_discrete_sequence=['#00ff88', '#ff4466'],
+                                template='plotly_dark',
+                                title="Churn Label Distribution")
+        fig_churn_val.update_layout(paper_bgcolor='rgba(0,0,0,0)',
+                                     plot_bgcolor='rgba(255,255,255,0.02)',
+                                     font=dict(color='#a0aec0'),
+                                     title=dict(font=dict(color='#ffffff', size=15), x=0.01),
+                                     xaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+                                     yaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+                                     showlegend=False,
+                                     margin=dict(l=10, r=10, t=50, b=10))
+        fig_churn_val.update_traces(marker_line_width=0, textfont=dict(color='white'))
+        st.plotly_chart(fig_churn_val, width='stretch')
+
+    st.markdown("---")
+    st.subheader("Field Summary Statistics")
+    st.dataframe(raw_df.describe().T.round(2), width='stretch')
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TAB 1: EXECUTIVE KPIs & ENGAGEMENT CLASSIFICATION
+# ═══════════════════════════════════════════════════════════════════
 with tab1:
     st.subheader("Key Performance Indicators (KPIs)")
 
-    churn_active = df[df['IsActiveMember'] == 1]['Exited'].mean()
+    # ── KPI Calculations ─────────────────────────────────────────
+    # 1. Engagement Retention Ratio (ERR)
+    churn_active   = df[df['IsActiveMember'] == 1]['Exited'].mean()
     churn_inactive = df[df['IsActiveMember'] == 0]['Exited'].mean()
     err = churn_active / churn_inactive if churn_inactive > 0 else 0
 
+    # 2. Product Depth Index (PDI) — churn rate of 1-product vs 2+-product customers
+    churn_single = df[df['NumOfProducts'] == 1]['Exited'].mean()
+    churn_multi  = df[df['NumOfProducts'] >= 2]['Exited'].mean()
+    pdi = churn_single / churn_multi if churn_multi > 0 else 0
+
+    # 3. High-Balance Disengagement Rate (HBDR)
     median_bal = df['Balance'].median()
     hbdr_denom = len(df[(df['Balance'] > median_bal) & (df['IsActiveMember'] == 0)])
-    hbdr_num = len(df[(df['Balance'] > median_bal) & (df['IsActiveMember'] == 0) & (df['Exited'] == 1)])
+    hbdr_num   = len(df[(df['Balance'] > median_bal) & (df['IsActiveMember'] == 0) & (df['Exited'] == 1)])
     hbdr = (hbdr_num / hbdr_denom) * 100 if hbdr_denom > 0 else 0
 
+    # 4. Credit Card Stickiness Score (CCSS) — churn rate spread: no card vs card holder
+    churn_no_card   = df[df['HasCrCard'] == 0]['Exited'].mean()
+    churn_with_card = df[df['HasCrCard'] == 1]['Exited'].mean()
+    ccss = (churn_no_card - churn_with_card) * 100  # positive = card reduces churn
+
+    # 5. Relationship Strength Index (RSI)
     avg_rsi = df['RSI'].mean()
 
+    # ── KPI Display — Row 1 ──────────────────────────────────────
     col1, col2, col3 = st.columns(3)
-    col1.metric(label="Engagement Retention Ratio (ERR)", value=f"{err:.2f}", help="Ratio of Active Churn vs Inactive Churn. Lower means active profiles stay longer.")
-    col2.metric(label="High-Balance Disengagement Rate", value=f"{hbdr:.1f}%", help="Percentage of inactive premium customers who churned.")
-    col3.metric(label="Avg Relationship Strength Index (RSI)", value=f"{avg_rsi:.1f} / 100", help="Aggregated health metric across the selected pool.")
+    col1.metric(
+        "Engagement Retention Ratio",
+        f"{err:.2f}x",
+        help="Active churn ÷ Inactive churn. Lower ratio = active members stay significantly longer."
+    )
+    col2.metric(
+        "Product Depth Index",
+        f"{pdi:.2f}x",
+        help="Single-product churn ÷ Multi-product churn. Higher = stronger loyalty lift from cross-selling."
+    )
+    col3.metric(
+        "High-Balance Disengagement Rate",
+        f"{hbdr:.1f}%",
+        help="% of inactive premium-balance customers who churned — direct premium revenue risk."
+    )
+
+    # ── KPI Display — Row 2 ──────────────────────────────────────
+    col4, col5, _ = st.columns(3)
+    col4.metric(
+        "Credit Card Stickiness Score",
+        f"{ccss:+.1f} pp",
+        help="Churn rate of non-card holders minus card holders (percentage points). Positive = card ownership reduces churn."
+    )
+    col5.metric(
+        "Relationship Strength Index",
+        f"{avg_rsi:.1f} / 100",
+        help="Composite score (activity × product count × card ownership). Higher = stronger retention bond."
+    )
 
     st.markdown("---")
-    st.subheader("Retention Performance by Engineered Engagement Profile")
+
+    # ── Engagement Classification ────────────────────────────────
+    st.subheader("Engagement Classification — Behavioral Archetypes")
+
     profile_summary = df.groupby('Engagement_Profile').agg(
         Total_Customers=('CustomerId', 'count'),
-        Churn_Rate=('Exited', 'mean')
+        Churn_Rate=('Exited', 'mean'),
+        Avg_RSI=('RSI', 'mean'),
+        Avg_Balance=('Balance', 'mean')
     ).reset_index()
     profile_summary['Churn_Rate'] = (profile_summary['Churn_Rate'] * 100).round(2)
+    profile_summary['Avg_RSI']    = profile_summary['Avg_RSI'].round(1)
+    profile_summary['Avg_Balance'] = profile_summary['Avg_Balance'].round(0)
 
-    fig_profile = px.bar(profile_summary, x='Engagement_Profile', y='Churn_Rate',
-                         text=profile_summary['Churn_Rate'].map('{:,.1f}%'.format),
-                         title="Churn Rate Across Behavioral Archetypes",
-                         labels={'Churn_Rate': 'Churn Rate (%)'}, color='Engagement_Profile',
-                         color_discrete_sequence=['#7b2ff7','#00d2ff','#ff0080','#00ff88','#ffaa00'],
-                         template='plotly_dark')
-    fig_profile.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
-        font=dict(color='#a0aec0', family='Inter'),
-        title=dict(font=dict(color='#ffffff', size=16, family='Inter'), x=0.01),
-        xaxis=dict(gridcolor='rgba(255,255,255,0.05)', showline=False),
-        yaxis=dict(gridcolor='rgba(255,255,255,0.05)', showline=False),
-        legend=dict(bgcolor='rgba(0,0,0,0)', bordercolor='rgba(255,255,255,0.1)'),
-        margin=dict(l=10, r=10, t=50, b=10)
-    )
-    fig_profile.update_traces(marker_line_width=0, textfont=dict(color='white'))
-    st.plotly_chart(fig_profile, width='stretch')
+    col_bar, col_sunburst = st.columns(2)
 
-# --- TAB 2: PRODUCT UTILIZATION IMPACT ---
+    with col_bar:
+        fig_profile = px.bar(profile_summary, x='Engagement_Profile', y='Churn_Rate',
+                             text=profile_summary['Churn_Rate'].map('{:,.1f}%'.format),
+                             title="Churn Rate Across Behavioral Archetypes",
+                             labels={'Churn_Rate': 'Churn Rate (%)'},
+                             color='Engagement_Profile',
+                             color_discrete_sequence=['#7b2ff7','#00d2ff','#ff0080','#00ff88','#ffaa00'],
+                             template='plotly_dark')
+        fig_profile.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+            font=dict(color='#a0aec0', family='Inter'),
+            title=dict(font=dict(color='#ffffff', size=16, family='Inter'), x=0.01),
+            xaxis=dict(gridcolor='rgba(255,255,255,0.05)', showline=False),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', showline=False),
+            legend=dict(bgcolor='rgba(0,0,0,0)', bordercolor='rgba(255,255,255,0.1)'),
+            margin=dict(l=10, r=10, t=50, b=10)
+        )
+        fig_profile.update_traces(marker_line_width=0, textfont=dict(color='white'))
+        st.plotly_chart(fig_profile, width='stretch')
+
+    with col_sunburst:
+        fig_sun = px.sunburst(
+            profile_summary, path=['Engagement_Profile'], values='Total_Customers',
+            color='Churn_Rate', color_continuous_scale='RdYlGn_r',
+            title="Profile Size & Churn Intensity",
+            template='plotly_dark'
+        )
+        fig_sun.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#a0aec0'),
+            title=dict(font=dict(color='#ffffff', size=16), x=0.01),
+            margin=dict(l=10, r=10, t=50, b=10)
+        )
+        st.plotly_chart(fig_sun, width='stretch')
+
+    st.markdown("#### Profile Reference Guide")
+    st.info("""
+    | Profile | Definition | Risk Level |
+    |---|---|---|
+    | **Active Engaged** | Active member with ≥2 products | 🟢 Low |
+    | **Active Low-Product** | Active member with only 1 product | 🟡 Medium |
+    | **Inactive Disengaged** | Inactive member with only 1 product | 🔴 High |
+    | **Inactive High-Balance** | Inactive member holding above-median balance | 🟠 Premium Risk |
+    | **Standard/Other** | All remaining customers | ⚪ Baseline |
+    """)
+
+    st.markdown("---")
+    st.subheader("Profile Summary Table")
+    st.dataframe(profile_summary.rename(columns={
+        'Total_Customers': 'Customers',
+        'Churn_Rate': 'Churn Rate (%)',
+        'Avg_RSI': 'Avg RSI',
+        'Avg_Balance': 'Avg Balance (€)'
+    }), width='stretch')
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TAB 2: PRODUCT UTILIZATION ANALYSIS
+# ═══════════════════════════════════════════════════════════════════
 with tab2:
-    st.subheader("The Impact of Product Depth and Mix on Customer Loyalty")
+    st.subheader("Product Utilization Analysis — Depth vs Churn Relationship")
 
     prod_summary = df.groupby('NumOfProducts').agg(
         Volume=('CustomerId', 'count'),
@@ -501,8 +719,8 @@ with tab2:
 
     with col_graph:
         fig_prod = px.line(prod_summary, x='NumOfProducts', y='Churn_Rate', markers=True,
-                           title="The Multi-Product Paradox Matrix",
-                           labels={'Churn_Rate': 'Observed Churn Rate (%)', 'NumOfProducts': 'Number of Active Bank Products'},
+                           title="Product Depth vs Churn Rate (The Multi-Product Paradox)",
+                           labels={'Churn_Rate': 'Observed Churn Rate (%)', 'NumOfProducts': 'Number of Active Products'},
                            template='plotly_dark', color_discrete_sequence=['#00d2ff'])
         fig_prod.update_layout(
             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
@@ -522,26 +740,198 @@ with tab2:
     with col_insights:
         st.markdown("#### 💡 Strategic Product Insights")
         st.info("""
-        * **Single-Product Vulnerability:** Customers with only 1 product typically experience the highest baseline silent churn.
-        * **The Sweet Spot:** Moving a customer from 1 product to 2 products usually triggers a severe drop in churn risk.
-        * **Cross-Selling Pitfall:** Be alert if churn spikes at 3 or 4 products. This often points to forced cross-selling or mismatched financial packages.
+        * **Single-Product Vulnerability:** Customers with only 1 product experience the highest baseline churn.
+        * **The Sweet Spot:** Moving from 1 → 2 products typically triggers a sharp drop in churn risk.
+        * **Cross-Selling Pitfall:** A churn spike at 3–4 products may signal forced or mismatched packages.
         """)
 
-# --- TAB 3: HIGH-VALUE DISENGAGED DETECTOR ---
+    st.markdown("---")
+
+    # ── Single vs Multi-Product Retention ───────────────────────
+    st.subheader("Single-Product vs Multi-Product Retention Comparison")
+
+    df_prod_class = df.copy()
+    df_prod_class['Product_Tier'] = df_prod_class['NumOfProducts'].apply(
+        lambda x: 'Single Product' if x == 1 else 'Multi-Product'
+    )
+
+    retention_compare = df_prod_class.groupby('Product_Tier').agg(
+        Customers=('CustomerId', 'count'),
+        Churn_Rate=('Exited', 'mean'),
+        Avg_RSI=('RSI', 'mean'),
+        Avg_Balance=('Balance', 'mean')
+    ).reset_index()
+    retention_compare['Churn_Rate'] = (retention_compare['Churn_Rate'] * 100).round(2)
+    retention_compare['Avg_RSI']    = retention_compare['Avg_RSI'].round(1)
+
+    col_sp, col_mp = st.columns(2)
+
+    with col_sp:
+        fig_tier = px.bar(retention_compare, x='Product_Tier', y='Churn_Rate',
+                          text=retention_compare['Churn_Rate'].map('{:.1f}%'.format),
+                          color='Product_Tier',
+                          color_discrete_sequence=['#ff0080', '#00ff88'],
+                          title="Churn Rate: Single vs Multi-Product",
+                          template='plotly_dark')
+        fig_tier.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+            font=dict(color='#a0aec0'),
+            title=dict(font=dict(color='#ffffff', size=15), x=0.01),
+            xaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+            showlegend=False, margin=dict(l=10, r=10, t=50, b=10)
+        )
+        fig_tier.update_traces(marker_line_width=0, textfont=dict(color='white'))
+        st.plotly_chart(fig_tier, width='stretch')
+
+    with col_mp:
+        st.dataframe(retention_compare.rename(columns={
+            'Churn_Rate': 'Churn Rate (%)',
+            'Avg_RSI': 'Avg RSI',
+            'Avg_Balance': 'Avg Balance (€)'
+        }), width='stretch')
+
+    st.markdown("---")
+
+    # ── Product Depth × Activity × Churn Heatmap ─────────────────
+    st.subheader("Product Depth × Activity Status — Churn Heatmap")
+
+    heat_data = df.groupby(['NumOfProducts', 'IsActiveMember'])['Exited'].mean().reset_index()
+    heat_data['IsActiveMember'] = heat_data['IsActiveMember'].map({1: 'Active', 0: 'Inactive'})
+    heat_data['Churn_Rate'] = (heat_data['Exited'] * 100).round(2)
+    heat_pivot = heat_data.pivot(index='IsActiveMember', columns='NumOfProducts', values='Churn_Rate')
+
+    fig_heat = px.imshow(
+        heat_pivot, text_auto='.1f',
+        color_continuous_scale='RdYlGn_r',
+        title="Churn Rate (%) by Activity Status and Product Count",
+        template='plotly_dark',
+        aspect='auto'
+    )
+    fig_heat.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(255,255,255,0.02)',
+        font=dict(color='#a0aec0'),
+        title=dict(font=dict(color='#ffffff', size=16), x=0.01),
+        margin=dict(l=10, r=10, t=50, b=10)
+    )
+    st.plotly_chart(fig_heat, width='stretch')
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TAB 3: FINANCIAL COMMITMENT vs ENGAGEMENT
+# ═══════════════════════════════════════════════════════════════════
 with tab3:
-    st.subheader("🚨 Actionable Risk Mitigation: Premium Inactive Accounts")
-    st.markdown("These high-net-worth customers are currently marked as **Inactive** but have **not yet churned (Exited = 0)**. They represent immediate retention targets for marketing cross-sell pipelines.")
+    st.subheader("Financial Commitment vs Engagement Analysis")
+
+    # ── Balance × Activity Cross-Analysis ───────────────────────
+    st.markdown("### Balance vs Activity Status — Cross Analysis")
+
+    bal_act = df.groupby('IsActiveMember').agg(
+        Customers=('CustomerId', 'count'),
+        Avg_Balance=('Balance', 'mean'),
+        Median_Balance=('Balance', 'median'),
+        Churn_Rate=('Exited', 'mean')
+    ).reset_index()
+    bal_act['IsActiveMember'] = bal_act['IsActiveMember'].map({1: 'Active', 0: 'Inactive'})
+    bal_act['Churn_Rate'] = (bal_act['Churn_Rate'] * 100).round(2)
+
+    col_bal1, col_bal2 = st.columns(2)
+    with col_bal1:
+        fig_bal_box = px.box(df, x=df['IsActiveMember'].map({1: 'Active', 0: 'Inactive'}),
+                             y='Balance', color=df['IsActiveMember'].map({1: 'Active', 0: 'Inactive'}),
+                             color_discrete_sequence=['#00d2ff', '#7b2ff7'],
+                             title="Balance Distribution by Activity Status",
+                             template='plotly_dark')
+        fig_bal_box.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+            font=dict(color='#a0aec0'),
+            title=dict(font=dict(color='#ffffff', size=15), x=0.01),
+            xaxis=dict(gridcolor='rgba(255,255,255,0.05)', title='Activity Status'),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+            showlegend=False, margin=dict(l=10, r=10, t=50, b=10)
+        )
+        st.plotly_chart(fig_bal_box, width='stretch')
+
+    with col_bal2:
+        fig_bal_churn = px.bar(bal_act, x='IsActiveMember', y='Avg_Balance',
+                               color='Churn_Rate', color_continuous_scale='RdYlGn_r',
+                               text=bal_act['Avg_Balance'].map('€{:,.0f}'.format),
+                               title="Avg Balance & Churn Rate by Activity",
+                               template='plotly_dark')
+        fig_bal_churn.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+            font=dict(color='#a0aec0'),
+            title=dict(font=dict(color='#ffffff', size=15), x=0.01),
+            xaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+            margin=dict(l=10, r=10, t=50, b=10)
+        )
+        fig_bal_churn.update_traces(marker_line_width=0, textfont=dict(color='white'))
+        st.plotly_chart(fig_bal_churn, width='stretch')
+
+    st.markdown("---")
+
+    # ── Salary–Balance Mismatch Detection ───────────────────────
+    st.markdown("### Salary–Balance Mismatch Detection")
+    st.markdown("Customers with **top-quartile salary** but **bottom-quartile balance** — high earners who aren't depositing.")
+
+    mismatch_summary = df.groupby('Salary_Balance_Mismatch').agg(
+        Customers=('CustomerId', 'count'),
+        Churn_Rate=('Exited', 'mean'),
+        Avg_Salary=('EstimatedSalary', 'mean'),
+        Avg_Balance=('Balance', 'mean')
+    ).reset_index()
+    mismatch_summary['Label'] = mismatch_summary['Salary_Balance_Mismatch'].map({0: 'No Mismatch', 1: 'Mismatch Detected'})
+    mismatch_summary['Churn_Rate'] = (mismatch_summary['Churn_Rate'] * 100).round(2)
+
+    col_mis1, col_mis2 = st.columns([1, 2])
+    with col_mis1:
+        mismatch_count = int(mismatch_summary[mismatch_summary['Salary_Balance_Mismatch'] == 1]['Customers'].sum())
+        mismatch_churn = mismatch_summary[mismatch_summary['Salary_Balance_Mismatch'] == 1]['Churn_Rate'].values
+        st.metric("Mismatch Customers", f"{mismatch_count:,}")
+        if len(mismatch_churn) > 0:
+            st.metric("Their Churn Rate", f"{mismatch_churn[0]:.1f}%")
+        st.dataframe(mismatch_summary[['Label', 'Customers', 'Churn_Rate', 'Avg_Salary', 'Avg_Balance']].rename(
+            columns={'Churn_Rate': 'Churn %', 'Avg_Salary': 'Avg Salary (€)', 'Avg_Balance': 'Avg Balance (€)'}
+        ), width='stretch')
+
+    with col_mis2:
+        fig_scatter = px.scatter(
+            df.sample(min(2000, len(df)), random_state=42),
+            x='EstimatedSalary', y='Balance',
+            color=df.sample(min(2000, len(df)), random_state=42)['Exited'].map({0: 'Retained', 1: 'Churned'}),
+            symbol=df.sample(min(2000, len(df)), random_state=42)['Salary_Balance_Mismatch'].map({0: 'Normal', 1: 'Mismatch'}),
+            color_discrete_map={'Retained': '#00d2ff', 'Churned': '#ff4466'},
+            title="Salary vs Balance — Churn & Mismatch Overlay",
+            template='plotly_dark',
+            opacity=0.6
+        )
+        fig_scatter.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+            font=dict(color='#a0aec0'),
+            title=dict(font=dict(color='#ffffff', size=15), x=0.01),
+            xaxis=dict(gridcolor='rgba(255,255,255,0.05)', title='Estimated Salary (€)'),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', title='Balance (€)'),
+            legend=dict(bgcolor='rgba(0,0,0,0)'),
+            margin=dict(l=10, r=10, t=50, b=10)
+        )
+        st.plotly_chart(fig_scatter, width='stretch')
+
+    st.markdown("---")
+
+    # ── At-Risk Premium Customers ────────────────────────────────
+    st.markdown("### 🚨 At-Risk Premium Customer Identification")
+    st.markdown("Inactive customers with above-median balance who have **not yet churned** — immediate retention targets.")
 
     median_global_balance = df['Balance'].median()
-
     at_risk_premium = df[
         (df['IsActiveMember'] == 0) &
         (df['Balance'] > median_global_balance) &
         (df['Exited'] == 0)
     ].sort_values(by='Balance', ascending=False)
 
-    st.write(f"**Identified At-Risk Premium Accounts in Current View:** {len(at_risk_premium)} customers")
-
+    st.write(f"**Identified At-Risk Premium Accounts:** {len(at_risk_premium)} customers")
     st.dataframe(at_risk_premium[[
         'CustomerId', 'Surname', 'CreditScore', 'Geography',
         'Age', 'Balance', 'NumOfProducts', 'RSI', 'Churn_Probability'
@@ -554,14 +944,19 @@ with tab3:
         file_name="at_risk_premium_retention_targets.csv",
         mime="text/csv"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TAB 4: ML CHURN INSIGHTS
+# ═══════════════════════════════════════════════════════════════════
 with tab4:
     st.subheader("🤖 Machine Learning: Churn Drivers")
-    
-    # Feature Importance
+
     importances = model.feature_importances_
-    feat_names = ['CreditScore', 'Geography', 'Gender', 'Age', 'Tenure', 'Balance', 'NumOfProducts', 'HasCrCard', 'IsActiveMember', 'EstimatedSalary']
+    feat_names = ['CreditScore', 'Geography', 'Gender', 'Age', 'Tenure', 'Balance',
+                  'NumOfProducts', 'HasCrCard', 'IsActiveMember', 'EstimatedSalary']
     feat_df = pd.DataFrame({'Feature': feat_names, 'Importance': importances}).sort_values(by='Importance', ascending=False)
-    
+
     fig_imp = px.bar(feat_df, x='Importance', y='Feature', orientation='h',
                      title="What Drives Churn? (Model Feature Importance)",
                      color='Importance', color_continuous_scale='Plasma',
@@ -577,7 +972,7 @@ with tab4:
     )
     fig_imp.update_traces(marker_line_width=0)
     st.plotly_chart(fig_imp, width='stretch')
-    
+
     st.info("""
     **Interpreting the Model:**
     The chart above shows which variables the AI uses most to predict churn.
@@ -590,12 +985,14 @@ with tab4:
     st.write("Top 50 customers the AI predicts will leave next:")
     st.dataframe(ml_at_risk[['CustomerId', 'Surname', 'Churn_Probability', 'RSI', 'Balance', 'NumOfProducts']])
 
-# --- TAB 5: RETENTION STRENGTH SCORING ---
+
+# ═══════════════════════════════════════════════════════════════════
+# TAB 5: RETENTION STRENGTH ASSESSMENT
+# ═══════════════════════════════════════════════════════════════════
 with tab5:
     st.subheader("💎 Retention Strength Index (RSI) Scoring Panel")
     st.markdown("RSI scores each customer 0–100 based on activity, product count, and card ownership. Higher = stronger retention bond.")
 
-    # RSI Tier classification
     def rsi_tier(score):
         if score >= 80:   return '🟢 Champion'
         elif score >= 60: return '🔵 Loyal'
@@ -605,7 +1002,6 @@ with tab5:
     df = df.copy()
     df['RSI_Tier'] = df['RSI'].apply(rsi_tier)
 
-    # KPI row
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🟢 Champions",  len(df[df['RSI_Tier'] == '🟢 Champion']),  help="RSI ≥ 80")
     c2.metric("🔵 Loyal",      len(df[df['RSI_Tier'] == '🔵 Loyal']),      help="RSI 60–79")
@@ -616,7 +1012,6 @@ with tab5:
     col_l, col_r = st.columns(2)
 
     with col_l:
-        # RSI Distribution histogram
         fig_rsi_dist = px.histogram(df, x='RSI', nbins=30, color='RSI_Tier',
                                     title="RSI Score Distribution by Tier",
                                     color_discrete_map={
@@ -639,7 +1034,6 @@ with tab5:
         st.plotly_chart(fig_rsi_dist, width='stretch')
 
     with col_r:
-        # Churn rate by RSI tier
         tier_churn = df.groupby('RSI_Tier').agg(
             Churn_Rate=('Exited', 'mean'),
             Count=('CustomerId', 'count')
@@ -669,9 +1063,112 @@ with tab5:
         st.plotly_chart(fig_tier, width='stretch')
 
     st.markdown("---")
+
+    # ── Sticky Customer Profiles ─────────────────────────────────
+    st.subheader("Sticky Customer Profiles — Zero-Churn Champions")
+    st.markdown("Customers who are **Champions (RSI ≥ 80)**, **retained**, and **multi-product** — the gold standard for loyalty.")
+
+    sticky = df[
+        (df['RSI_Tier'] == '🟢 Champion') &
+        (df['Exited'] == 0) &
+        (df['NumOfProducts'] >= 2)
+    ]
+
+    sc1, sc2, sc3 = st.columns(3)
+    sc1.metric("Sticky Customers", f"{len(sticky):,}")
+    sc2.metric("Avg Balance (€)", f"€{sticky['Balance'].mean():,.0f}" if len(sticky) > 0 else "N/A")
+    sc3.metric("Avg Tenure (yrs)", f"{sticky['Tenure'].mean():.1f}" if len(sticky) > 0 else "N/A")
+
+    if len(sticky) > 0:
+        sticky_geo = sticky.groupby('Geography').size().reset_index(name='Count')
+        fig_sticky = px.pie(sticky_geo, names='Geography', values='Count',
+                            title="Sticky Customer Geography Mix",
+                            color_discrete_sequence=['#00ff88', '#00d2ff', '#7b2ff7'],
+                            template='plotly_dark', hole=0.4)
+        fig_sticky.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='#a0aec0'),
+            title=dict(font=dict(color='#ffffff', size=15), x=0.01),
+            legend=dict(bgcolor='rgba(0,0,0,0)'),
+            margin=dict(l=10, r=10, t=50, b=10)
+        )
+        st.plotly_chart(fig_sticky, width='stretch')
+
+    st.markdown("---")
+
+    # ── Churn Stability Across Engagement Tiers ──────────────────
+    st.subheader("Churn Stability Across Engagement Tiers")
+
+    tier_stability = df.groupby(['RSI_Tier', 'Engagement_Profile']).agg(
+        Customers=('CustomerId', 'count'),
+        Churn_Rate=('Exited', 'mean')
+    ).reset_index()
+    tier_stability['Churn_Rate'] = (tier_stability['Churn_Rate'] * 100).round(2)
+
+    fig_stability = px.bar(
+        tier_stability, x='RSI_Tier', y='Churn_Rate',
+        color='Engagement_Profile', barmode='group',
+        title="Churn Rate by RSI Tier & Engagement Profile",
+        color_discrete_sequence=['#7b2ff7','#00d2ff','#ff0080','#00ff88','#ffaa00'],
+        template='plotly_dark',
+        text='Churn_Rate'
+    )
+    fig_stability.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+        font=dict(color='#a0aec0'),
+        title=dict(font=dict(color='#ffffff', size=16), x=0.01),
+        xaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+        yaxis=dict(gridcolor='rgba(255,255,255,0.05)', title='Churn Rate (%)'),
+        legend=dict(bgcolor='rgba(0,0,0,0)'),
+        margin=dict(l=10, r=10, t=50, b=10)
+    )
+    fig_stability.update_traces(marker_line_width=0, texttemplate='%{text:.1f}%', textposition='outside',
+                                 textfont=dict(color='white', size=9))
+    st.plotly_chart(fig_stability, width='stretch')
+
+    st.markdown("---")
+
+    # ── Engagement Thresholds Linked to Retention ─────────────────
+    st.subheader("Engagement Thresholds Linked to Retention")
+    st.markdown("RSI threshold analysis — identifying the score band where churn risk sharply changes.")
+
+    rsi_bins = pd.cut(df['RSI'], bins=range(0, 105, 10), right=False)
+    threshold_df = df.groupby(rsi_bins, observed=False).agg(
+        Customers=('CustomerId', 'count'),
+        Churn_Rate=('Exited', 'mean')
+    ).reset_index()
+    threshold_df['RSI_Band'] = threshold_df['RSI'].astype(str)
+    threshold_df['Churn_Rate'] = (threshold_df['Churn_Rate'] * 100).round(2)
+
+    fig_thresh = go.Figure()
+    fig_thresh.add_trace(go.Bar(
+        x=threshold_df['RSI_Band'], y=threshold_df['Customers'],
+        name='Customer Volume', marker_color='rgba(123,47,247,0.5)',
+        yaxis='y2'
+    ))
+    fig_thresh.add_trace(go.Scatter(
+        x=threshold_df['RSI_Band'], y=threshold_df['Churn_Rate'],
+        name='Churn Rate (%)', mode='lines+markers',
+        line=dict(color='#00d2ff', width=3),
+        marker=dict(size=9, color='#ff0080'),
+        yaxis='y'
+    ))
+    fig_thresh.update_layout(
+        title=dict(text='RSI Band — Churn Rate & Volume Overlay', font=dict(color='#ffffff', size=16), x=0.01),
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+        font=dict(color='#a0aec0'),
+        xaxis=dict(title='RSI Score Band', gridcolor='rgba(255,255,255,0.05)'),
+        yaxis=dict(title='Churn Rate (%)', gridcolor='rgba(255,255,255,0.05)', side='left'),
+        yaxis2=dict(title='Customer Volume', overlaying='y', side='right', showgrid=False),
+        legend=dict(bgcolor='rgba(0,0,0,0)'),
+        margin=dict(l=10, r=10, t=50, b=10),
+        template='plotly_dark'
+    )
+    st.plotly_chart(fig_thresh, width='stretch')
+
+    st.markdown("---")
     st.subheader("📋 RSI Scoring Breakdown — Full Customer List")
 
-    # RSI component breakdown
     display_cols = ['CustomerId', 'Surname', 'Geography', 'Age', 'IsActiveMember',
                     'NumOfProducts', 'HasCrCard', 'Balance', 'RSI', 'RSI_Tier', 'Churn_Probability']
     tier_order = {'🔴 Critical': 0, '🟡 At Risk': 1, '🔵 Loyal': 2, '🟢 Champion': 3}
