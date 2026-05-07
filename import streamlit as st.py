@@ -95,7 +95,7 @@ st.markdown("""
     -webkit-text-fill-color: transparent;
     background-clip: text;
     animation: shine 6s linear infinite;
-    font-size: 2.4rem;
+    font-size: 4.3rem;
     font-weight: 800;
     letter-spacing: -0.5px;
     margin: 0;
@@ -341,7 +341,7 @@ p, .stMarkdown p { color: rgba(226,232,240,0.85) !important; }
 # Hero header
 st.markdown("""
 <div class="hero-banner">
-    <div class="hero-badge">🏦 AI-Powered Analytics</div>
+    <div class="hero-badge"></div>
     <p class="glass-title">📊 Customer Engagement & Retention Intelligence</p>
     <p class="glass-subtitle">Strategic Retention Dashboard &nbsp;·&nbsp; Risk Detector &nbsp;·&nbsp; ML Churn Prediction</p>
 </div>
@@ -407,19 +407,39 @@ raw_df['Churn_Probability'] = (model.predict_proba(X_pred)[:, 1] * 100).round(2)
 
 # 3. Sidebar Filtering Panel
 st.sidebar.header("🎯 Filter Analytics Space")
-geography = st.sidebar.multiselect("Select Region/Geography", options=list(raw_df['Geography'].unique()), default=list(raw_df['Geography'].unique()))
-gender = st.sidebar.multiselect("Select Gender", options=list(raw_df['Gender'].unique()), default=list(raw_df['Gender'].unique()))
-age_range = st.sidebar.slider("Age Dynamic Filter", int(raw_df['Age'].min()), int(raw_df['Age'].max()), (25, 65))
+
+st.sidebar.markdown("**Engagement Filters**")
+geography = st.sidebar.multiselect("Region / Geography", options=list(raw_df['Geography'].unique()), default=list(raw_df['Geography'].unique()))
+gender = st.sidebar.multiselect("Gender", options=list(raw_df['Gender'].unique()), default=list(raw_df['Gender'].unique()))
+age_range = st.sidebar.slider("Age Range", int(raw_df['Age'].min()), int(raw_df['Age'].max()), (25, 65))
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Product Count Filter**")
+prod_range = st.sidebar.slider("Number of Products", int(raw_df['NumOfProducts'].min()), int(raw_df['NumOfProducts'].max()), (int(raw_df['NumOfProducts'].min()), int(raw_df['NumOfProducts'].max())))
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Balance Threshold**")
+bal_range = st.sidebar.slider("Balance (€)", int(raw_df['Balance'].min()), int(raw_df['Balance'].max()), (int(raw_df['Balance'].min()), int(raw_df['Balance'].max())), step=1000)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Salary Threshold**")
+sal_range = st.sidebar.slider("Estimated Salary (€)", int(raw_df['EstimatedSalary'].min()), int(raw_df['EstimatedSalary'].max()), (int(raw_df['EstimatedSalary'].min()), int(raw_df['EstimatedSalary'].max())), step=1000)
 
 # Apply Dynamic Filters
 df = raw_df[
     (raw_df['Geography'].isin(geography)) &
     (raw_df['Gender'].isin(gender)) &
-    (raw_df['Age'].between(age_range[0], age_range[1]))
+    (raw_df['Age'].between(age_range[0], age_range[1])) &
+    (raw_df['NumOfProducts'].between(prod_range[0], prod_range[1])) &
+    (raw_df['Balance'].between(bal_range[0], bal_range[1])) &
+    (raw_df['EstimatedSalary'].between(sal_range[0], sal_range[1]))
 ]
 
+st.sidebar.markdown("---")
+st.sidebar.metric("Filtered Customers", f"{len(df):,}", delta=f"{len(df)-len(raw_df):,} from total")
+
 # 4. Tabs Layout
-tab1, tab2, tab3, tab4 = st.tabs(["🚀 Executive KPIs & Overview", "🎯 Product Depth Matrix", "⚠️ At-Risk Premium Detector", "🤖 ML Churn Insights"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Executive KPIs & Overview", "🎯 Product Depth Matrix", "⚠️ At-Risk Premium Detector", "🤖 ML Churn Insights", "💎 Retention Strength Scoring"])
 
 # --- TAB 1: EXECUTIVE OVERVIEW ---
 with tab1:
@@ -569,3 +589,101 @@ with tab4:
     ml_at_risk = df[df['Exited'] == 0].sort_values(by='Churn_Probability', ascending=False).head(50)
     st.write("Top 50 customers the AI predicts will leave next:")
     st.dataframe(ml_at_risk[['CustomerId', 'Surname', 'Churn_Probability', 'RSI', 'Balance', 'NumOfProducts']])
+
+# --- TAB 5: RETENTION STRENGTH SCORING ---
+with tab5:
+    st.subheader("💎 Retention Strength Index (RSI) Scoring Panel")
+    st.markdown("RSI scores each customer 0–100 based on activity, product count, and card ownership. Higher = stronger retention bond.")
+
+    # RSI Tier classification
+    def rsi_tier(score):
+        if score >= 80:   return '🟢 Champion'
+        elif score >= 60: return '🔵 Loyal'
+        elif score >= 40: return '🟡 At Risk'
+        else:             return '🔴 Critical'
+
+    df = df.copy()
+    df['RSI_Tier'] = df['RSI'].apply(rsi_tier)
+
+    # KPI row
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🟢 Champions",  len(df[df['RSI_Tier'] == '🟢 Champion']),  help="RSI ≥ 80")
+    c2.metric("🔵 Loyal",      len(df[df['RSI_Tier'] == '🔵 Loyal']),      help="RSI 60–79")
+    c3.metric("🟡 At Risk",    len(df[df['RSI_Tier'] == '🟡 At Risk']),    help="RSI 40–59")
+    c4.metric("🔴 Critical",   len(df[df['RSI_Tier'] == '🔴 Critical']),   help="RSI < 40")
+
+    st.markdown("---")
+    col_l, col_r = st.columns(2)
+
+    with col_l:
+        # RSI Distribution histogram
+        fig_rsi_dist = px.histogram(df, x='RSI', nbins=30, color='RSI_Tier',
+                                    title="RSI Score Distribution by Tier",
+                                    color_discrete_map={
+                                        '🟢 Champion': '#00ff88',
+                                        '🔵 Loyal':    '#00d2ff',
+                                        '🟡 At Risk':  '#ffaa00',
+                                        '🔴 Critical': '#ff4466'
+                                    },
+                                    template='plotly_dark')
+        fig_rsi_dist.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+            font=dict(color='#a0aec0', family='Inter'),
+            title=dict(font=dict(color='#ffffff', size=16), x=0.01),
+            xaxis=dict(gridcolor='rgba(255,255,255,0.05)', showline=False),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', showline=False),
+            legend=dict(bgcolor='rgba(0,0,0,0)'),
+            margin=dict(l=10, r=10, t=50, b=10),
+            bargap=0.05
+        )
+        st.plotly_chart(fig_rsi_dist, width='stretch')
+
+    with col_r:
+        # Churn rate by RSI tier
+        tier_churn = df.groupby('RSI_Tier').agg(
+            Churn_Rate=('Exited', 'mean'),
+            Count=('CustomerId', 'count')
+        ).reset_index()
+        tier_churn['Churn_Rate'] = (tier_churn['Churn_Rate'] * 100).round(2)
+
+        fig_tier = px.bar(tier_churn, x='RSI_Tier', y='Churn_Rate',
+                          text=tier_churn['Churn_Rate'].map('{:.1f}%'.format),
+                          title="Churn Rate by RSI Tier",
+                          color='RSI_Tier',
+                          color_discrete_map={
+                              '🟢 Champion': '#00ff88',
+                              '🔵 Loyal':    '#00d2ff',
+                              '🟡 At Risk':  '#ffaa00',
+                              '🔴 Critical': '#ff4466'
+                          },
+                          template='plotly_dark')
+        fig_tier.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(255,255,255,0.02)',
+            font=dict(color='#a0aec0', family='Inter'),
+            title=dict(font=dict(color='#ffffff', size=16), x=0.01),
+            xaxis=dict(gridcolor='rgba(255,255,255,0.05)', showline=False),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', showline=False),
+            showlegend=False, margin=dict(l=10, r=10, t=50, b=10)
+        )
+        fig_tier.update_traces(marker_line_width=0, textfont=dict(color='white'))
+        st.plotly_chart(fig_tier, width='stretch')
+
+    st.markdown("---")
+    st.subheader("📋 RSI Scoring Breakdown — Full Customer List")
+
+    # RSI component breakdown
+    display_cols = ['CustomerId', 'Surname', 'Geography', 'Age', 'IsActiveMember',
+                    'NumOfProducts', 'HasCrCard', 'Balance', 'RSI', 'RSI_Tier', 'Churn_Probability']
+    tier_order = {'🔴 Critical': 0, '🟡 At Risk': 1, '🔵 Loyal': 2, '🟢 Champion': 3}
+    sorted_df = df[display_cols].copy()
+    sorted_df['_sort'] = sorted_df['RSI_Tier'].map(tier_order)
+    sorted_df = sorted_df.sort_values('_sort').drop(columns='_sort')
+    st.dataframe(sorted_df, width='stretch')
+
+    csv_rsi = sorted_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Export RSI Scoring Report",
+        data=csv_rsi,
+        file_name="rsi_retention_scoring.csv",
+        mime="text/csv"
+    )
